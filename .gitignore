@@ -1,0 +1,19 @@
+# Environment
+.env
+
+# Elasticsearch data
+elasticsearch-data/
+filebeat-data/
+
+# Logs
+*.log
+/var/log/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml

@@ -1,0 +1,11 @@
+flowchart LR
+    A["🔥 Hot\nDay 0–1\nActive writes · max 50GB"]
+    B["☁️ Warm\nDay 1–30\nRead-only · compressed · 1 shard"]
+    C["🗑️ Delete\nAfter 30 days\nAuto-removed"]
+
+    A -->|After 1 day| B
+    B -->|After 30 days| C
+
+    style A fill:#faece7,stroke:#993c1d,color:#4a1b0c
+    style B fill:#e6f1fb,stroke:#185fa5,color:#042c53
+    style C fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
