@@ -14,10 +14,38 @@ Production-ready centralized logging with **Elasticsearch, Logstash, Kibana, and
 
 ## Architecture
 
-```
-[Spring Boot] → /var/log/apps/auth-service/application.log  ↘
-[Laravel    ] → /var/log/apps/billing-api/elk.log            → [Filebeat] → [Logstash] → [Elasticsearch] → [Kibana]
-[Node.js    ] → /var/log/apps/notification-api/app.log      ↗
+```mermaid
+flowchart LR
+    subgraph Apps["Applications"]
+        SB["auth-service\nSpring Boot :8080"]
+        LA["billing-api\nLaravel :8000"]
+        NO["notification-api\nNode.js :3000"]
+    end
+
+    subgraph Logs["./logs/ (shared volume)"]
+        L1["auth-service/\napplication.log"]
+        L2["billing-api/\nelk.log"]
+        L3["notification-api/\napp.log"]
+    end
+
+    subgraph ELK["ELK Stack"]
+        FB["Filebeat"]
+        LS["Logstash\n:5044"]
+        ES["Elasticsearch\n:9200"]
+        KB["Kibana\n:5601"]
+    end
+
+    SB -->|JSON logs| L1
+    LA -->|JSON logs| L2
+    NO -->|JSON logs| L3
+
+    L1 --> FB
+    L2 --> FB
+    L3 --> FB
+
+    FB -->|Beats protocol| LS
+    LS -->|parsed + enriched| ES
+    ES --> KB
 ```
 
 File-based logging (apps write to disk, Filebeat ships) over direct TCP shipping for resilience: if Logstash goes down, apps keep running and Filebeat buffers until it recovers.
@@ -41,26 +69,31 @@ cp .env.example .env
 # Edit .env and set a strong ELASTIC_PASSWORD
 ```
 
-### 2. Set kernel parameter (required for Elasticsearch)
-
-```bash
-sudo sysctl -w vm.max_map_count=262144
-echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-```
-
-### 3. Create the shared Docker network
+### 2. Create the shared Docker network
 
 ```bash
 docker network create logging-network
 ```
 
-### 4. Start the stack
+### 4. Create log directories
+
+```bash
+mkdir -p logs/auth-service logs/billing-api logs/notification-api
+```
+
+### 5. Start the ELK stack
 
 ```bash
 docker compose -f docker-compose.elk.yml up -d
 ```
 
-### 5. Verify
+### 6. Start the demo apps (optional)
+
+```bash
+docker compose -f docker-compose.apps.yml up -d
+```
+
+### 7. Verify
 
 ```bash
 # Check all containers are running
@@ -68,6 +101,11 @@ docker ps
 
 # Verify Elasticsearch health (status should be "green" or "yellow")
 curl -u elastic:your_password 'http://localhost:9200/_cluster/health?pretty'
+
+# Hit each app health endpoint
+curl http://localhost:8080/health   # auth-service (Spring Boot)
+curl http://localhost:8000/health   # billing-api (Laravel)
+curl http://localhost:3000/health   # notification-api (Node.js)
 
 # Access Kibana
 open http://localhost:5601
@@ -77,6 +115,8 @@ open http://localhost:5601
 
 ## Stack Components
 
+### ELK
+
 | Component | Version | Port | Role |
 |---|---|---|---|
 | Elasticsearch | 8.11.1 | 9200 | Storage + search |
@@ -84,13 +124,26 @@ open http://localhost:5601
 | Kibana | 8.11.1 | 5601 | Visualize |
 | Filebeat | 8.11.1 | — | Ship log files |
 
+### Demo Applications
+
+| Service | Stack | Port | Compose file |
+|---|---|---|---|
+| auth-service | Spring Boot 3.2 | 8080 | docker-compose.apps.yml |
+| billing-api | Laravel 10 / PHP 8.3 | 8000 | docker-compose.apps.yml |
+| notification-api | Node.js 20 / Express | 3000 | docker-compose.apps.yml |
+
 ---
 
 ## Application Integration
 
 ### Spring Boot
 
-Add to `pom.xml`:
+See `apps/auth-service/` for a working example. Key files:
+
+- `src/main/resources/logback-spring.xml` — JSON structured logging via Logback
+- `src/main/java/.../filter/MdcLoggingFilter.java` — correlation ID propagation via MDC
+
+Requires `logstash-logback-encoder` in `pom.xml`:
 
 ```xml
 <dependency>
@@ -100,18 +153,42 @@ Add to `pom.xml`:
 </dependency>
 ```
 
-Copy `spring-boot/logback-spring.xml` to `src/main/resources/`.
-Copy `spring-boot/MdcLoggingFilter.java` to your filter package.
+Logs are written to `/app/logs/application.log` in JSON format, picked up by Filebeat.
 
-Logs will be written to `/app/logs/application.log` in JSON format, picked up by Filebeat.
+### Laravel
+
+In `config/logging.php`, add a custom channel using `ElkFormatter`:
+
+```php
+'elk' => [
+    'driver'    => 'single',
+    'path'      => storage_path('logs/elk.log'),
+    'formatter' => \App\Logging\ElkFormatter::class,
+    'level'     => 'debug',
+],
+```
+
+Copy `apps/billing-api/app/Logging/ElkFormatter.php` to your project. Set the log channel:
+
+```bash
+LOG_CHANNEL=elk
+```
+
+Logs will be written to `storage/logs/elk.log` in JSON format, picked up by Filebeat.
 
 ### Node.js
+
+See `apps/notification-api/` for a working example. Key files:
+
+- `src/logger.js` — Winston JSON logger with daily log rotation
+- `src/middleware/requestLogger.js` — correlation ID injection and slow request detection
+
+Requires:
 
 ```bash
 npm install winston winston-daily-rotate-file uuid
 ```
 
-Copy `nodejs/logger.js` and `nodejs/middleware/requestLogger.js` to your project.
 Set environment variables:
 
 ```bash
@@ -165,11 +242,8 @@ level_name: "ERROR" and not logger: "org.springframework*"
 
 ## Key Production Lessons
 
-1. **Set `vm.max_map_count=262144`** before starting — Elasticsearch won't start without it
-2. **Never store credentials in ConfigMap** — use K8s Secrets or GCP Secret Manager
-3. **`MDC.clear()` in `finally` is mandatory** — thread pool reuse bleeds MDC context across requests
-4. **Check `unknown-logs-*` weekly** — logs appearing there mean a service is misconfigured
-5. **Set ILM policy on day one** — not after your disk is full
+1. **Check `unknown-logs-*` weekly** — logs appearing there mean a service is misconfigured
+2. **Set ILM policy on day one** — not after your disk is full
 
 ---
 
@@ -177,19 +251,22 @@ level_name: "ERROR" and not logger: "org.springframework*"
 
 ```
 elk-centralized-logging/
-├── docker-compose.elk.yml         # Full ELK stack
-├── .env.example                   # Environment variables template
+├── docker-compose.elk.yml          # ELK stack (Elasticsearch, Logstash, Kibana, Filebeat)
+├── docker-compose.apps.yml         # Demo applications
+├── .env.example                    # Environment variables template
+├── logs/                           # Shared log volume (mounted by apps + Filebeat)
+│   ├── auth-service/
+│   ├── billing-api/
+│   └── notification-api/
 ├── logstash/
 │   ├── config/logstash.yml
-│   └── pipeline/beats-input.conf  # Multi-app routing logic
+│   └── pipeline/beats-input.conf   # Multi-app routing logic
 ├── filebeat/
-│   └── config/filebeat.yml        # Multi-app input config
-├── spring-boot/
-│   ├── logback-spring.xml         # JSON structured logging
-│   └── MdcLoggingFilter.java      # Correlation ID propagation
-├── nodejs/
-│   ├── logger.js                  # Winston JSON logger
-│   └── middleware/requestLogger.js # Slow request detection
+│   └── config/filebeat.yml         # Multi-app input config
+├── apps/
+│   ├── auth-service/               # Spring Boot — validates users, calls billing-api
+│   ├── billing-api/                # Laravel — subscription status
+│   └── notification-api/           # Node.js — sends notifications via auth-service
 └── docs/
     ├── elk-architecture.excalidraw
     └── elk-ilm-lifecycle.mmd
