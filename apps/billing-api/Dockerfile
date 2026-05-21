@@ -5,18 +5,15 @@ RUN apt-get update -y && apt-get install -y git unzip libzip-dev curl \
 
 WORKDIR /var/www/html
 
-# Install Laravel base (cached layer)
-RUN composer create-project --prefer-dist laravel/laravel:^10 . --quiet
+COPY composer.json ./
+RUN composer install --no-dev --no-scripts --optimize-autoloader
 
-# Overlay our custom files (app/ includes Http/, Logging/, Providers/)
-COPY app/ app/
-COPY config/logging.php config/logging.php
-COPY routes/api.php routes/api.php
+COPY . .
 COPY .env.docker .env
 
-RUN php artisan key:generate \
-    && mkdir -p storage/logs bootstrap/cache \
-    && chmod -R 777 storage bootstrap/cache
+RUN mkdir -p storage/logs bootstrap/cache \
+    && chmod -R 777 storage bootstrap/cache \
+    && php artisan key:generate
 
 EXPOSE 8000
 CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]

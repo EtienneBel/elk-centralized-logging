@@ -45,7 +45,8 @@ services:
 
   notification-api:
     build:
-      context: ./apps/notification-api
+      context: .
+      dockerfile: apps/notification-api/Dockerfile
     container_name: notification-api
     environment:
       - APP_NAME=notification-api
