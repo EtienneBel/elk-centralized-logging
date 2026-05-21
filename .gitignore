@@ -1,12 +1,33 @@
 # Environment
 .env
 
-# Elasticsearch data
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
+
+# Spring Boot / Maven / Gradle
+target/
+build/
+.gradle/
+*.jar
+*.war
+*.class
+*.pid
+
+# ELK / Docker volumes & data
 elasticsearch-data/
 filebeat-data/
+logstash-data/
+kibana-data/
+esdata*/
 
 # Logs
 *.log
+logs/
 /var/log/
 
 # OS
@@ -17,3 +38,5 @@ Thumbs.db
 .idea/
 .vscode/
 *.iml
+*.swp
+*.swo

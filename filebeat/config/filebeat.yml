@@ -33,7 +33,7 @@ filebeat.inputs:
     id: nodejs-notification-logs
     enabled: true
     paths:
-      - /var/log/apps/notification-api/app.log
+      - /var/log/apps/notification-api/app-*.log
     json:
       keys_under_root: true
       overwrite_keys: true
