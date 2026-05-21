@@ -1,47 +1,45 @@
 filebeat.inputs:
   - type: log
-    id: springboot-auth-logs
+    id: springboot-fraud-logs
     enabled: true
     paths:
-      - /var/log/apps/auth-service/application.log
+      - /var/log/apps/fraud-service/application.log
+      - /var/log/apps/fraud-service/application.*.log
     json:
       keys_under_root: true
       overwrite_keys: true
       add_error_key: true
       message_key: message
     fields:
-      service: springboot
-      application: auth-service
+      service: fraud-service
     fields_under_root: false
 
   - type: log
-    id: laravel-billing-logs
+    id: laravel-account-logs
     enabled: true
     paths:
-      - /var/log/apps/billing-api/elk.log
+      - /var/log/apps/account-service/elk.log
     json:
       keys_under_root: true
       overwrite_keys: true
       add_error_key: true
       message_key: message
     fields:
-      service: laravel
-      application: billing-api
+      service: account-service
     fields_under_root: false
 
   - type: log
-    id: nodejs-notification-logs
+    id: nodejs-transaction-logs
     enabled: true
     paths:
-      - /var/log/apps/notification-api/app-*.log
+      - /var/log/apps/transaction-api/app-*.log
     json:
       keys_under_root: true
       overwrite_keys: true
       add_error_key: true
       message_key: message
     fields:
-      service: nodejs
-      application: notification-api
+      service: transaction-api
     fields_under_root: false
 
 output.logstash:

@@ -17,15 +17,15 @@ Production-ready centralized logging with **Elasticsearch, Logstash, Kibana, and
 ```mermaid
 flowchart LR
     subgraph Apps["Applications"]
-        SB["auth-service\nSpring Boot :8080"]
-        LA["billing-api\nLaravel :8000"]
-        NO["notification-api\nNode.js :3000"]
+        SB["fraud-service\nSpring Boot :8080"]
+        LA["account-service\nLaravel :8000"]
+        NO["transaction-api\nNode.js :3000"]
     end
 
     subgraph Logs["./logs/ (shared volume)"]
-        L1["auth-service/\napplication.log"]
-        L2["billing-api/\nelk.log"]
-        L3["notification-api/\napp.log"]
+        L1["fraud-service/\napplication.log"]
+        L2["account-service/\nelk.log"]
+        L3["transaction-api/\napp-*.log"]
     end
 
     subgraph ELK["ELK Stack"]
@@ -47,6 +47,8 @@ flowchart LR
     LS -->|parsed + enriched| ES
     ES --> KB
 ```
+
+Call chain: transaction-api → fraud-service (score) → account-service (debit/credit). A single POST /transfer generates correlated log entries across all three services and tech stacks.
 
 File-based logging (apps write to disk, Filebeat ships) over direct TCP shipping for resilience: if Logstash goes down, apps keep running and Filebeat buffers until it recovers.
 
@@ -75,25 +77,25 @@ cp .env.example .env
 docker network create logging-network
 ```
 
-### 4. Create log directories
+### 3. Create log directories
 
 ```bash
-mkdir -p logs/auth-service logs/billing-api logs/notification-api
+mkdir -p logs/fraud-service logs/account-service logs/transaction-api
 ```
 
-### 5. Start the ELK stack
+### 4. Start the ELK stack
 
 ```bash
 docker compose -f docker-compose.elk.yml up -d
 ```
 
-### 6. Start the demo apps (optional)
+### 5. Start the demo apps (optional)
 
 ```bash
 docker compose -f docker-compose.apps.yml up -d
 ```
 
-### 7. Verify
+### 6. Verify
 
 ```bash
 # Check all containers are running
@@ -103,9 +105,9 @@ docker ps
 curl -u elastic:your_password 'http://localhost:9200/_cluster/health?pretty'
 
 # Hit each app health endpoint
-curl http://localhost:8080/health   # auth-service (Spring Boot)
-curl http://localhost:8000/health   # billing-api (Laravel)
-curl http://localhost:3000/health   # notification-api (Node.js)
+curl http://localhost:8080/health   # fraud-service (Spring Boot)
+curl http://localhost:8000/health   # account-service (Laravel)
+curl http://localhost:3000/health   # transaction-api (Node.js)
 
 # Access Kibana
 open http://localhost:5601
@@ -128,9 +130,9 @@ open http://localhost:5601
 
 | Service | Stack | Port | Compose file |
 |---|---|---|---|
-| auth-service | Spring Boot 3.2 | 8080 | docker-compose.apps.yml |
-| billing-api | Laravel 10 / PHP 8.3 | 8000 | docker-compose.apps.yml |
-| notification-api | Node.js 20 / Express | 3000 | docker-compose.apps.yml |
+| transaction-api | Node.js 20 / Express   | 3000 | docker-compose.apps.yml |
+| fraud-service   | Spring Boot 3.2        | 8080 | docker-compose.apps.yml |
+| account-service | Laravel 12 / PHP 8.3   | 8000 | docker-compose.apps.yml |
 
 ---
 
@@ -138,7 +140,7 @@ open http://localhost:5601
 
 ### Spring Boot
 
-See `apps/auth-service/` for a working example. Key files:
+See `apps/fraud-service/` for a working example. Key files:
 
 - `src/main/resources/logback-spring.xml` — JSON structured logging via Logback
 - `src/main/java/.../filter/MdcLoggingFilter.java` — correlation ID propagation via MDC
@@ -168,7 +170,7 @@ In `config/logging.php`, add a custom channel using `ElkFormatter`:
 ],
 ```
 
-Copy `apps/billing-api/app/Logging/ElkFormatter.php` to your project. Set the log channel:
+Copy `apps/account-service/app/Logging/ElkFormatter.php` to your project. Set the log channel:
 
 ```bash
 LOG_CHANNEL=elk
@@ -178,7 +180,7 @@ Logs will be written to `storage/logs/elk.log` in JSON format, picked up by File
 
 ### Node.js
 
-See `apps/notification-api/` for a working example. Key files:
+See `apps/transaction-api/` for a working example. Key files:
 
 - `src/logger.js` — Winston JSON logger with daily log rotation
 - `src/middleware/requestLogger.js` — correlation ID injection and slow request detection
@@ -222,20 +224,23 @@ curl -u elastic:your_password -X PUT \
 ## Kibana: Useful KQL Queries
 
 ```
-# All errors in the last hour
-level_name: "ERROR" and @timestamp > now-1h
-
-# Trace a request across ALL services
+# Trace a full money transfer across all 3 services
 correlationId: "a3f8c21b"
 
-# Slow requests above 2 seconds
-duration_ms > 2000 and level_name: "WARN"
+# All blocked transactions (fraud or insufficient funds)
+level_name: "ERROR" and application: "transaction-api"
 
-# Specific service errors only
-application: "billing-api" and level_name: "ERROR"
+# Velocity attacks detected in the last hour
+message: "Velocity attack" and @timestamp > now-1h
 
-# Exclude framework noise
-level_name: "ERROR" and not logger: "org.springframework*"
+# Large amounts flagged by fraud-service
+level_name: "WARN" and application: "fraud-service"
+
+# Low balance warnings from account-service
+level_name: "WARN" and application: "account-service"
+
+# All errors across the entire system
+level_name: "ERROR" and @timestamp > now-1h
 ```
 
 ---
@@ -255,18 +260,18 @@ elk-centralized-logging/
 ├── docker-compose.apps.yml         # Demo applications
 ├── .env.example                    # Environment variables template
 ├── logs/                           # Shared log volume (mounted by apps + Filebeat)
-│   ├── auth-service/
-│   ├── billing-api/
-│   └── notification-api/
+│   ├── fraud-service/
+│   ├── account-service/
+│   └── transaction-api/
 ├── logstash/
 │   ├── config/logstash.yml
 │   └── pipeline/beats-input.conf   # Multi-app routing logic
 ├── filebeat/
 │   └── config/filebeat.yml         # Multi-app input config
 ├── apps/
-│   ├── auth-service/               # Spring Boot — validates users, calls billing-api
-│   ├── billing-api/                # Laravel — subscription status
-│   └── notification-api/           # Node.js — sends notifications via auth-service
+│   ├── transaction-api/    # Node.js — receives transfers, orchestrates the flow
+│   ├── fraud-service/      # Spring Boot — scores transactions, detects velocity attacks
+│   └── account-service/    # Laravel — holds balances, executes debit/credit
 └── docs/
     ├── elk-architecture.excalidraw
     └── elk-ilm-lifecycle.mmd

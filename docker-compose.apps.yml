@@ -1,14 +1,30 @@
 services:
-  billing-api:
+  fraud-service:
     build:
-      context: ./apps/billing-api
-    container_name: billing-api
-    environment:
-      - LOG_CHANNEL=elk
-      - APP_ENV=production
-      - APP_DEBUG=false
+      context: ./apps/fraud-service
+    container_name: fraud-service
     volumes:
-      - ./logs/billing-api:/var/www/html/storage/logs
+      - ./logs/fraud-service:/app/logs
+    ports:
+      - "8080:8080"
+    networks:
+      - logging-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  account-service:
+    build:
+      context: ./apps/account-service
+    container_name: account-service
+    environment:
+      - APP_ENV=production
+      - LOG_CHANNEL=elk
+    volumes:
+      - ./logs/account-service:/app/storage/logs
     ports:
       - "8000:8000"
     networks:
@@ -20,46 +36,27 @@ services:
       timeout: 5s
       retries: 5
 
-  auth-service:
+  transaction-api:
     build:
-      context: ./apps/auth-service
-    container_name: auth-service
+      context: ./apps/transaction-api
+    container_name: transaction-api
     environment:
-      - SPRING_PROFILES_ACTIVE=production
-      - BILLING_SERVICE_URL=http://billing-api:8000
-    volumes:
-      - ./logs/auth-service:/app/logs
-    ports:
-      - "8080:8080"
-    networks:
-      - logging-network
-    depends_on:
-      billing-api:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-
-  notification-api:
-    build:
-      context: ./apps/notification-api
-    container_name: notification-api
-    environment:
-      - APP_NAME=notification-api
       - NODE_ENV=production
+      - APP_NAME=transaction-api
       - LOG_DIR=/app/logs
-      - AUTH_SERVICE_URL=http://auth-service:8080
+      - FRAUD_SERVICE_URL=http://fraud-service:8080
+      - ACCOUNT_SERVICE_URL=http://account-service:8000
+      - PORT=3000
     volumes:
-      - ./logs/notification-api:/app/logs
+      - ./logs/transaction-api:/app/logs
     ports:
       - "3000:3000"
     networks:
       - logging-network
     depends_on:
-      auth-service:
+      fraud-service:
+        condition: service_healthy
+      account-service:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
