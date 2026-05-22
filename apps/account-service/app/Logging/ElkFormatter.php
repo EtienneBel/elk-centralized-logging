@@ -11,9 +11,11 @@ class ElkFormatter implements FormatterInterface
     {
         $data = array_merge(
             [
-                'datetime'   => $record->datetime->format('Y-m-d\TH:i:s.v\Z'),
-                'level_name' => $record->level->getName(),
-                'message'    => $record->message,
+                'datetime'    => $record->datetime->format('Y-m-d\TH:i:s.v\Z'),
+                'level_name'  => $record->level->getName(),
+                'message'     => $record->message,
+                'application' => env('APP_NAME', 'account-service'),
+                'environment' => env('APP_ENV', 'production'),
             ],
             $record->context,
             $record->extra

@@ -24,7 +24,7 @@ services:
       - APP_ENV=production
       - LOG_CHANNEL=elk
     volumes:
-      - ./logs/account-service:/app/storage/logs
+      - ./logs/account-service:/var/www/html/storage/logs
     ports:
       - "8000:8000"
     networks:

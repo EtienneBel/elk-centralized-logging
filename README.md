@@ -136,6 +136,137 @@ open http://localhost:5601
 
 ---
 
+## Demo Scenarios
+
+### Seeded accounts (reset on container restart)
+
+| Account | Owner | Balance | Notes |
+|---|---|---|---|
+| ACC001 | Alice | 5 000.00 | Normal |
+| ACC002 | Bob | 3 000.00 | Normal |
+| ACC003 | Charlie | 1 500.00 | Normal |
+| ACC004 | Eve | 150.00 | Low balance — any transfer > 150 fails |
+| ACC_BLOCKED | — | — | Blacklisted — always blocked by fraud-service |
+| ACC999 | — | — | Does not exist — triggers 404 |
+
+### API reference
+
+**transaction-api** — all demo traffic goes here
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| POST | `/transfer` | `{ "from", "to", "amount" }` | Initiate a money transfer |
+| GET | `/health` | — | Health check |
+
+**fraud-service** — called internally by transaction-api
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| POST | `/check` | `{ "accountId", "amount" }` | Score a transaction |
+| GET | `/health` | — | Health check |
+
+**account-service** — called internally by transaction-api
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| POST | `/execute` | `{ "from", "to", "amount" }` | Debit sender, credit receiver |
+| GET | `/account/{id}` | — | Get account info + balance |
+| GET | `/health` | — | Health check |
+
+### Scenario 1 — Normal transfer
+
+```bash
+curl -s -X POST http://localhost:3000/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"ACC001","to":"ACC002","amount":100}' | jq
+```
+
+Expected response `200`:
+```json
+{ "success": true, "correlationId": "<id>", "fromBalance": 4900.0, "toBalance": 3100.0 }
+```
+
+Kibana — search `correlationId: "<id>"` → 3 INFO entries, one per service.
+
+### Scenario 2 — Large amount (flagged, not blocked)
+
+```bash
+curl -s -X POST http://localhost:3000/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"ACC001","to":"ACC002","amount":15000}' | jq
+```
+
+Expected response `200`:
+```json
+{ "success": true, "correlationId": "<id>", "fromBalance": ..., "toBalance": ... }
+```
+
+Kibana — `correlationId: "<id>"` → WARN in fraud-service (`Large amount flagged`) + WARN in transaction-api.
+
+### Scenario 3 — Velocity attack (3 requests within 60 s)
+
+```bash
+for i in 1 2 3; do
+  curl -s -X POST http://localhost:3000/transfer \
+    -H "Content-Type: application/json" \
+    -d '{"from":"ACC003","to":"ACC001","amount":10}' | jq .
+done
+```
+
+Expected: first two `200`, third `403`:
+```json
+{ "error": "Transfer blocked", "reason": "Velocity attack detected", "correlationId": "<id>" }
+```
+
+Kibana — `message: "Velocity attack" and application: "fraud-service"` → ERROR on the third call.
+
+### Scenario 4 — Insufficient funds
+
+```bash
+curl -s -X POST http://localhost:3000/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"ACC004","to":"ACC001","amount":500}' | jq
+```
+
+Expected response `402`:
+```json
+{ "error": "Insufficient funds", "correlationId": "<id>" }
+```
+
+Kibana — `correlationId: "<id>"` → ERROR in account-service + ERROR in transaction-api.
+
+### Scenario 5 — Blacklisted account
+
+```bash
+curl -s -X POST http://localhost:3000/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"ACC_BLOCKED","to":"ACC001","amount":50}' | jq
+```
+
+Expected response `403`:
+```json
+{ "error": "Transfer blocked", "reason": "Blacklisted account", "correlationId": "<id>" }
+```
+
+Kibana — `correlationId: "<id>"` → ERROR in fraud-service (`Blacklisted account`) + ERROR in transaction-api. account-service is never called.
+
+### Scenario 6 — Unknown account
+
+```bash
+curl -s -X POST http://localhost:3000/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"ACC999","to":"ACC001","amount":50}' | jq
+```
+
+Expected response `404`:
+```json
+{ "error": "Account not found", "correlationId": "<id>" }
+```
+
+Kibana — `correlationId: "<id>"` → ERROR in account-service + ERROR in transaction-api.
+
+---
+
 ## Application Integration
 
 ### Spring Boot
@@ -221,7 +352,27 @@ curl -u elastic:your_password -X PUT \
 
 ---
 
-## Kibana: Useful KQL Queries
+## Kibana: Setup & Queries
+
+### 1. Create a data view
+
+1. Open [http://localhost:5601](http://localhost:5601) and log in (`elastic` / your password)
+2. Go to **Stack Management → Kibana → Data Views**
+3. Click **Create data view**
+4. Set **Index pattern** to `*-logs-*` (matches all three service indices)
+5. Set **Timestamp field** to `@timestamp`
+6. Click **Save data view to Kibana**
+
+> Indices are created the first time a service writes a log. If the data view shows 0 fields, trigger a request first (`curl http://localhost:3000/health`), then refresh.
+
+### 2. Open Discover
+
+1. Go to **Discover** (left sidebar)
+2. Select the `*-logs-*` data view in the top-left dropdown
+3. Set the time range to **Last 15 minutes** (top-right)
+4. Paste any KQL query below into the search bar and press Enter
+
+### 3. Useful KQL queries
 
 ```
 # Trace a full money transfer across all 3 services
