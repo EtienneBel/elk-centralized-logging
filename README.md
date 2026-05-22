@@ -77,25 +77,34 @@ cp .env.example .env
 docker network create logging-network
 ```
 
-### 3. Create log directories
+### 3. Set kernel parameter (required for Elasticsearch)
+
+> Linux only — skip on macOS (Docker Desktop manages this internally).
+
+```bash
+sudo sysctl -w vm.max_map_count=262144
+echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+```
+
+### 4. Create log directories
 
 ```bash
 mkdir -p logs/fraud-service logs/account-service logs/transaction-api
 ```
 
-### 4. Start the ELK stack
+### 5. Start the ELK stack
 
 ```bash
 docker compose -f docker-compose.elk.yml up -d
 ```
 
-### 5. Start the demo apps (optional)
+### 6. Start the demo apps (optional)
 
 ```bash
 docker compose -f docker-compose.apps.yml up -d
 ```
 
-### 6. Verify
+### 7. Verify
 
 ```bash
 # Check all containers are running
@@ -400,6 +409,9 @@ level_name: "ERROR" and @timestamp > now-1h
 
 1. **Check `unknown-logs-*` weekly** — logs appearing there mean a service is misconfigured
 2. **Set ILM policy on day one** — not after your disk is full
+3. **`MDC.clear()` in `finally` is mandatory** — thread pool reuse bleeds MDC context across requests
+4. **Never enable DEBUG globally** — saturates Elasticsearch within days on any real traffic
+5. **File-based > direct TCP** — if Logstash goes down, apps keep running, Filebeat buffers automatically
 
 ---
 
